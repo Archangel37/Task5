@@ -1,26 +1,35 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.MemoryMappedFiles;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Windows.Forms;
+using System.Xml;
+using System.Xml.Linq;
+using System.Xml.Serialization;
+using System.Xml.XPath;
 
 namespace Task5_BM25
 {
     public partial class Form1 : Form
     {
         //(*) https://ru.wikipedia.org/wiki/Okapi_BM25 
-        //https://habrahabr.ru/post/81592/
+        //https://habrahabr.ru/post/81592/ - на почитать
 
         private const double k1 = 2, b = 0.75;
         private static string Dict = "абвгдеёжзийклмнопрстуфхцчшщъыьэюя ";
         private string[] filesTxt;
         private List<TextDefinition> OurLibrary = new List<TextDefinition>();
         private readonly string Separator = "_____________________________" + Environment.NewLine;
+        private readonly string Separator2 = "............................." + Environment.NewLine;
 
         public Form1()
         {
             InitializeComponent();
+            Evaluate.Enabled = false;
+            textBox_search_string.Enabled = false;
+            checkBox_TxtOrUrl.Checked = true;
         }
 
         //убрать лишние табуляции, переводы каретки и новую строку, пробелы вначале и конце
@@ -37,7 +46,7 @@ namespace Task5_BM25
         //public static int WordsCounter(string input) => input.Split(' ').Length;
 
 
-        private double nq(string q, List<TextDefinition> listTexts) => listTexts.Count(x => x.NormalizedTextFromFile.Contains(q));
+        private double nq(string q, List<TextDefinition> listTexts) => listTexts.Count(x => x.NormalizedTextFromSource.Contains(q));
 
         //посчитать IDF - см описание (*)
         //взять основание для непрерывных систем е или 33 для буквенных - дискретных - пока что взято е, но с серьёзной работой 
@@ -49,16 +58,16 @@ namespace Task5_BM25
 
 
         //среднее число слов - avgdl - см описание (*)
-        private double avgdl(List<TextDefinition> listTexts) => (double) listTexts.Aggregate(0, (cur, x) => cur + x.NumWordsInFile) / listTexts.Count;
+        private double avgdl(List<TextDefinition> listTexts) => (double) listTexts.Aggregate(0, (cur, x) => cur + x.NumWordsInSource) / listTexts.Count;
 
         //частота слова в документе
-        private double FrequencyWord(string q, TextDefinition fileTxt) => (double) fileTxt.NormalizedTextFromFile.Count(word => word == q) / fileTxt.NumWordsInFile;
+        private double FrequencyWord(string q, TextDefinition fileTxt) => (double) fileTxt.NormalizedTextFromSource.Count(word => word == q) / fileTxt.NumWordsInSource;
 
 
         //баллы одного слова в одном тексте
         private double Score(string q, List<TextDefinition> listTexts, TextDefinition D)
         => IDF(q, listTexts) * FrequencyWord(q, D) * (k1 + 1) /
-                   (FrequencyWord(q, D) + k1 * (1 - b + b * D.NumWordsInFile / avgdl(listTexts)));
+                   (FrequencyWord(q, D) + k1 * (1 - b + b * D.NumWordsInSource / avgdl(listTexts)));
 
 
         //баллы всего запроса в одном файле
@@ -89,17 +98,27 @@ namespace Task5_BM25
             OurLibrary.Reverse();
 
             foreach (var element in OurLibrary)
-                richTextBox_result.Text += (element == OurLibrary[0] ? "Winner! -> " : string.Empty) + "Score: " +
-                                           element.ScoreText +
-                                           " Book: " + element.Path + Environment.NewLine;
-
-            //
-            richTextBox_result.Text += Separator + "Details:" + Environment.NewLine;
-            foreach (var element in OurLibrary)
+            {
+                if (OurLibrary.Count(x=> x.ScoreText>0) >0 && element.ScoreText>0)
                 richTextBox_result.Text +=
-                    element.Path + "  -> " + element.NumWordsInFile + " words" + Environment.NewLine;
-            //
+                    (element == OurLibrary[0] && element.ScoreText > 0 ? "Winner! -> " : string.Empty) + "Score: " +
+                    element.ScoreText + " Source: " + element.Path + Environment.NewLine;
+                else if (OurLibrary.Count(x => x.ScoreText > 0) == 0)
+                {
+                    richTextBox_result.Text += "No matches found.. Try to change Your request" + Environment.NewLine;
+                    break;
+                }
+            }
+            // можно вывести детали источников - сколько слов в каждом
+            //richTextBox_result.Text += Separator + "Details:" + Environment.NewLine;
+            //foreach (var element in OurLibrary)
+            //    richTextBox_result.Text +=
+            //        element.Path + "  -> " + element.NumWordsInSource + " words" + Environment.NewLine;
+
+            //среднее число слов в источниках
             richTextBox_result.Text += "AVG words: " + avgdl(OurLibrary) + Environment.NewLine;
+            
+            //подробности значений поиска наглядно
             richTextBox_result.Text += Separator + "Search details:" + Environment.NewLine;
             foreach (var qSearchOption in searchOptions)
             {
@@ -107,13 +126,17 @@ namespace Task5_BM25
                                            (IDF(qSearchOption, OurLibrary) < 0 ? " (thick word, ignore)" : "") +
                                            Environment.NewLine;
                 richTextBox_result.Text +=
-                    qSearchOption + " -> n(qi): " + nq(qSearchOption, OurLibrary) + Environment.NewLine;
+                    qSearchOption + " -> n(qi): " + nq(qSearchOption, OurLibrary) + Environment.NewLine + Separator2;
+               
             }
         }
 
 
-        private void button_source_Click(object sender, EventArgs e)
+        private void FromTextFiles()
         {
+            var DateStart = DateTime.Now;
+            //OurLibrary.Clear();
+            OurLibrary = new List<TextDefinition>();
             using (var folderDialog = new FolderBrowserDialog())
             {
                 if (folderDialog.ShowDialog(this) != DialogResult.OK) return;
@@ -121,16 +144,74 @@ namespace Task5_BM25
                 textBox_path.Text = folderDialog.SelectedPath;
                 filesTxt = Directory.GetFiles(folderDialog.SelectedPath, "*.txt");
 
-                foreach (var file in filesTxt)
+                //стараемся параллельно считывать значения
+                System.Threading.Tasks.Parallel.ForEach(filesTxt, file =>
+                    //foreach (var file in filesTxt)
                 {
                     OurLibrary.Add(new TextDefinition());
                     OurLibrary[OurLibrary.Count - 1].Path = file;
+                    
+                    //продумать использование MMF
+                    //using (var mmf =
+                    //    MemoryMappedFile.CreateFromFile(file, FileMode.Open, file))
+                    //using (MemoryMappedViewAccessor accessor = mmf.CreateViewAccessor(0, new FileInfo(file).Length))
+                    //{
+
+                    //    //OurLibrary[OurLibrary.Count - 1].NormalizedTextFromFile = 
+                    //}
                     //(!!!)Файлы только в UTF-8, по поводу кодировок не стал пока заморачиваться
-                    //продумать ускорение - на больших файлах просто ппц
-                    OurLibrary[OurLibrary.Count - 1].NormalizedTextFromFile =
+                    //продумать ускорение - на "больших" файлах просто ппц (1мб+)
+                    OurLibrary[OurLibrary.Count - 1].NormalizedTextFromSource =
                         SpacesAndUpperRemove(File.ReadAllText(file));
-                }
+                });
+               
             }
+            //для последующего сравнения для оптимизации вывожу себе время
+            richTextBox_result.Text += DateTime.Now - DateStart;
+        }
+
+        
+
+
+        private void FromXmlUrl()
+        {
+            //OurLibrary.Clear();
+            OurLibrary = new List<TextDefinition>();
+            textBox_path.Text = "http://bash.im/rss/";
+
+            XDocument doc;
+            using (var xmlReader = new XmlTextReader("http://bash.im/rss/"))
+                doc = XDocument.Load(xmlReader);
+            
+            
+            //!!!!
+            foreach (XElement el in doc.Root.Elements())
+            {
+                foreach (XElement element in el.Elements())
+                foreach (var littlElement in element.Elements())
+                    {
+                        if (littlElement.Name == "link")
+                        {
+                            OurLibrary.Add(new TextDefinition());
+                            //на случай пустого пути
+                            OurLibrary[OurLibrary.Count-1].Path = littlElement.Value.Length >0 ? littlElement.Value : "http:";                           
+                        }
+                        if (littlElement.Name == "description")
+                            //на случай написания символами или латиницей всего дескрипшена
+                            OurLibrary[OurLibrary.Count - 1].NormalizedTextFromSource =
+                                SpacesAndUpperRemove(littlElement.Value).Length >0 ? SpacesAndUpperRemove(littlElement.Value) : SpacesAndUpperRemove("ААА ббб"); 
+                    }
+            }
+        }
+
+
+        private void button_source_Click(object sender, EventArgs e)
+        {
+            if (checkBox_TxtOrUrl.Checked) FromXmlUrl();
+            else FromTextFiles();
+
+            Evaluate.Enabled = true;
+            textBox_search_string.Enabled = true;
         }
 
         //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! класс текстовиков
@@ -138,20 +219,15 @@ namespace Task5_BM25
         {
             public string Path { get; set; }
 
-            public string[]
-                NormalizedTextFromFile
-            {
-                get;
-                set;
-            } // => SpacesAndUpperRemove(File.ReadAllText(Path)); - требуется статичный метод, но тогда текста везде будут одинаковые
+            public string[] NormalizedTextFromSource { get; set; }
 
-            public int NumWordsInFile => NormalizedTextFromFile.Length;
+            public int NumWordsInSource => NormalizedTextFromSource.Length;
             public double ScoreText { get; set; }
 
-            public int CompareTo(TextDefinition p)
-            {
-                return ScoreText.CompareTo(p.ScoreText);
-            }
+            //компаратор - для работы рортировки
+            public int CompareTo(TextDefinition p) => ScoreText.CompareTo(p.ScoreText);
+            
         }
+
     }
 }
