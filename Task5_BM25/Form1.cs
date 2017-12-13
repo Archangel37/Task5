@@ -224,7 +224,7 @@ namespace Task5_BM25
             public int NumWordsInSource => NormalizedTextFromSource.Length;
             public double ScoreText { get; set; }
 
-            //компаратор - для работы рортировки
+            //компаратор - для работы сортировки
             public int CompareTo(TextDefinition p) => ScoreText.CompareTo(p.ScoreText);
             
         }
