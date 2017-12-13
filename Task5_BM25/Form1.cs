@@ -43,9 +43,6 @@ namespace Task5_BM25
         //тут получается итоговый набор слов мелкими буквами, кириллица с одним пробелом между словами и в одну строку
         private string[] SpacesAndUpperRemove(string input) => Normalizer(Regex.Replace(NRT_Remove(input), "[ ]+", " ").ToLower()).Split(' ');
 
-        //public static int WordsCounter(string input) => input.Split(' ').Length;
-
-
         private double nq(string q, List<TextDefinition> listTexts) => listTexts.Count(x => x.NormalizedTextFromSource.Contains(q));
 
         //посчитать IDF - см описание (*)
@@ -56,19 +53,16 @@ namespace Task5_BM25
                 (listTexts.Count - nq(q, listTexts) + 0.5) /
                 (nq(q, listTexts) + 0.5));
 
-
         //среднее число слов - avgdl - см описание (*)
         private double avgdl(List<TextDefinition> listTexts) => (double) listTexts.Aggregate(0, (cur, x) => cur + x.NumWordsInSource) / listTexts.Count;
 
         //частота слова в документе
         private double FrequencyWord(string q, TextDefinition fileTxt) => (double) fileTxt.NormalizedTextFromSource.Count(word => word == q) / fileTxt.NumWordsInSource;
 
-
         //баллы одного слова в одном тексте
         private double Score(string q, List<TextDefinition> listTexts, TextDefinition D)
         => IDF(q, listTexts) * FrequencyWord(q, D) * (k1 + 1) /
                    (FrequencyWord(q, D) + k1 * (1 - b + b * D.NumWordsInSource / avgdl(listTexts)));
-
 
         //баллы всего запроса в одном файле
         //принято решение игнорировать отрицательные(!!!) - часто входящие слова в более чем половину документов 
@@ -87,7 +81,6 @@ namespace Task5_BM25
                     MessageBoxIcon.Error);
                 return;
             }
-
             //можно вводить любую кириллицу и знаки, знаки игнорятся - к примеру, "Бесы, котОрые всполошились"
             var searchOptions = Regex.Replace(Normalizer(textBox_search_string.Text.ToLower()), "[ ]+", " ").Split(' ');
 
@@ -163,8 +156,7 @@ namespace Task5_BM25
                     //продумать ускорение - на "больших" файлах просто ппц (1мб+)
                     OurLibrary[OurLibrary.Count - 1].NormalizedTextFromSource =
                         SpacesAndUpperRemove(File.ReadAllText(file));
-                });
-               
+                });    
             }
             //для последующего сравнения для оптимизации вывожу себе время
             richTextBox_result.Text += DateTime.Now - DateStart;
@@ -182,8 +174,7 @@ namespace Task5_BM25
             XDocument doc;
             using (var xmlReader = new XmlTextReader("http://bash.im/rss/"))
                 doc = XDocument.Load(xmlReader);
-            
-            
+
             //!!!!
             foreach (XElement el in doc.Root.Elements())
             {
@@ -204,7 +195,6 @@ namespace Task5_BM25
             }
         }
 
-
         private void button_source_Click(object sender, EventArgs e)
         {
             if (checkBox_TxtOrUrl.Checked) FromXmlUrl();
@@ -218,16 +208,12 @@ namespace Task5_BM25
         private class TextDefinition : IComparable<TextDefinition>
         {
             public string Path { get; set; }
-
             public string[] NormalizedTextFromSource { get; set; }
-
             public int NumWordsInSource => NormalizedTextFromSource.Length;
             public double ScoreText { get; set; }
 
             //компаратор - для работы сортировки
-            public int CompareTo(TextDefinition p) => ScoreText.CompareTo(p.ScoreText);
-            
+            public int CompareTo(TextDefinition p) => ScoreText.CompareTo(p.ScoreText);  
         }
-
     }
 }
